@@ -39,6 +39,15 @@ def main():
         ignore_mismatched_sizes=True
     )
 
+    def model_init():
+        return AutoModelForImageClassification.from_pretrained(
+            model_name,
+            num_labels=label_info.num_classes,
+            id2label=id2label,
+            label2id=label2id,
+            ignore_mismatched_sizes=True
+        )
+
     accuracy = evaluate.load("accuracy")
 
     def compute_metrics(eval_pred):
@@ -51,28 +60,32 @@ def main():
         labels = torch.tensor([example["labels"] for example in examples])
         return {"pixel_values": pixel_values, "labels": labels}
 
+    def hp_space(trial):
+        return {
+            "learning_rate": trial.suggest_float("learning_rate", 1e-6, 1e-4, log=True),
+            "num_train_epochs": trial.suggest_int("num_train_epochs", 3, 6),
+            "per_device_train_batch_size": trial.suggest_categorical("per_device_train_batch_size", [2, 4]),
+            "warmup_steps": trial.suggest_int("warmup_steps", 0, 500)
+        }
+
     print("Setting up training...")
     args = TrainingArguments(
         output_dir=str(CHECKPOINT_DIR),
         remove_unused_columns=False,
         eval_strategy="epoch",
         save_strategy="epoch",
-        learning_rate=5e-5,
-        per_device_train_batch_size=4,
-        per_device_eval_batch_size=1,
         gradient_accumulation_steps=4,
         gradient_checkpointing=True,
         optim="adafactor",
-        num_train_epochs=3,
-        warmup_steps=100,
         logging_steps=10,
         load_best_model_at_end=True,
         metric_for_best_model="accuracy",
-        fp16=True
+        fp16=True,
+        disable_tqdm=False
     )
 
     trainer = Trainer(
-        model=model,
+        model_init=model_init,
         args=args,
         data_collator=collate_fn,
         train_dataset=dataset["train"],
@@ -84,11 +97,26 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    print("Starting training...")
+    print("Starting hyperparameter search...")
+    best_run = trainer.hyperparameter_search(
+        direction="maximize",
+        backend="optuna",
+        hp_space=hp_space,
+        n_trials=5
+    )
+
+    print("\nBest Hyperparameters found:")
+    for n, v in best_run.hyperparameters.items():
+        print(f"{n}: {v}")
+
+    for n, v in best_run.hyperparameters.items():
+        setattr(trainer.args, n, v)
+
+    print("\nStarting final training with optimal parameters...")
     trainer.train()
 
-    print(f"Saving model to {MODEL_DIR}")
-    model.save_pretrained(str(MODEL_DIR))
+    print(f"Saving optimized model to {MODEL_DIR}")
+    trainer.save_model(str(MODEL_DIR))
     processor.save_pretrained(str(MODEL_DIR))
 
 if __name__ == "__main__":
