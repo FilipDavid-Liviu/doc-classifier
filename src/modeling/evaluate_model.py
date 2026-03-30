@@ -4,17 +4,19 @@ from PIL import Image
 from transformers import AutoImageProcessor, AutoModelForImageClassification
 from sklearn.metrics import classification_report, accuracy_score
 
-from src.config import SUBSET_DATA_DIR, MODEL_DIR
+from src.config import MODEL_DIR, SUBSET_VALIDATION_DIR
 
 
 def main():
-    data_dir = str(SUBSET_DATA_DIR)
+    data_dir = str(SUBSET_VALIDATION_DIR)
     model_dir = str(MODEL_DIR)
     max_samples_per_class = 50
 
     print(f"Loading model from {model_dir}...")
     processor = AutoImageProcessor.from_pretrained(model_dir)
     model = AutoModelForImageClassification.from_pretrained(model_dir)
+
+    print(f"Loading data from {data_dir}...")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -32,7 +34,7 @@ def main():
 
     for category in classes:
         cat_path = os.path.join(data_dir, category)
-        images = [f for f in os.listdir(cat_path) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.tif', '.tiff'))]
+        images = [f for f in os.listdir(cat_path) if f.lower().endswith('.tif')]
         images = images[:max_samples_per_class]
 
         for img_name in images:
